@@ -9,5 +9,6 @@ export const uploadAadhaarImages = async (front: File, back: File) => {
   formData.append('back', back);
 
   const response = await axios.post(`${API_URL}/aadhaar`, formData);
+  console.log('This sihte Response data ::',response)
   return response.data;
 };

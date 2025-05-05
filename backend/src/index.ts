@@ -5,6 +5,7 @@ import path from 'path';
 import fs from 'fs';
 import cors from 'cors'; // Importing the CORS package
 import router from './routes/router';
+import { errorHandler } from './middleware/errorHandling';
 
 const uploadDir = path.join(__dirname, 'uploads');
 if (!fs.existsSync(uploadDir)) {
@@ -25,7 +26,7 @@ app.get('/', (req, res) => {
 });
 
 app.use('/api', router);
-
+app.use(errorHandler);
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });

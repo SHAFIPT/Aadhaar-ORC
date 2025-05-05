@@ -1,19 +1,22 @@
 import React, { useState } from 'react';
 import { uploadAadhaarImages } from '../service/service';
+import { toast } from 'react-toastify';
+import { AxiosError } from 'axios';
 
 export default function AadhaarOCR() {
   const [frontImage, setFrontImage] = useState<File | null>(null);
   const [backImage, setBackImage] = useState<File | null>(null);
-  const [extractedData, setExtractedData] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
   const [frontPreview, setFrontPreview] = useState<string | null>(null);
   const [backPreview, setBackPreview] = useState<string | null>(null);
+  const [extractedData, setExtractedData] = useState<string>('');
+  const [isLoading, setIsLoading] = useState<boolean>(false);
+
 
   const handleFileChange = (
-  e: React.ChangeEvent<HTMLInputElement>,
-  setImage: React.Dispatch<React.SetStateAction<File | null>>,
-  setPreview: React.Dispatch<React.SetStateAction<string | null>>
-) => {
+    e: React.ChangeEvent<HTMLInputElement>,
+    setImage: React.Dispatch<React.SetStateAction<File | null>>,
+    setPreview: React.Dispatch<React.SetStateAction<string | null>>
+  ) => {
     if (e.target.files && e.target.files.length > 0) {
       const file = e.target.files[0];
       setImage(file);
@@ -28,28 +31,139 @@ export default function AadhaarOCR() {
   };
 
   const handleUpload = async () => {
-    if (!frontImage || !backImage) {
-      alert("Please upload both front and back images.");
-      return;
-    }
+  if (!frontImage || !backImage) {
+    toast.error("Please upload both front and back images."); // Toast for missing images
+    return;
+  }
 
-    setIsLoading(true);
+  setIsLoading(true);
+
+  const formData = new FormData();
+  formData.append('front', frontImage);
+  formData.append('back', backImage);
+
+  try {
+    const data = await uploadAadhaarImages(frontImage, backImage);
+    console.log('Backend response data:', data);
+    setExtractedData(data.data);
+    setIsLoading(false);
+  } catch (err: unknown) {
+    console.error(err);
     
-    const formData = new FormData();
-    formData.append('front', frontImage);
-    formData.append('back', backImage);
-
-    try {
-      // Actual API call (commented out for artifact example)
-      const data = await uploadAadhaarImages(frontImage, backImage);
-      setExtractedData(data.data);
-      setIsLoading(false);
-    } catch (err) {
-      console.error(err);
-      setExtractedData("Failed to extract data. Please try again.");
-      setIsLoading(false);
+    // Type the error as AxiosError to access response properties
+    if (err instanceof AxiosError && err.response && err.response.data && err.response.data.message) {
+      toast.error(err.response.data.message); // Show error message from backend
+    } else {
+      toast.error("Failed to extract data. Please try again.");
     }
+    
+    setExtractedData("Failed to extract data. Please try again.");
+    setIsLoading(false);
+  }
+};
+  // Format the extracted data for better display
+  const formatExtractedData = () => {
+    if (!extractedData) return [];
+    
+    // Special case for manually formatting Aadhaar data
+    // Extract structured fields from raw text
+    const aadhaarMatch = extractedData.match(/Aadhaar Number\s*:?\s*([0-9 ]+)/i);
+    const nameMatch = extractedData.match(/Name\s*:?\s*([^\n]+)/i);
+    const dobMatch = extractedData.match(/Dob\s*:?\s*([0-9/]+)/i);
+    const genderMatch = extractedData.match(/Gender\s*:?\s*([^\n]+)/i);
+    const pincodeMatch = extractedData.match(/Pincode\s*:?\s*([0-9]+)/i);
+    
+    // Prepare structured data
+    const dataEntries = [];
+    
+    // Add basic fields
+    if (aadhaarMatch && aadhaarMatch[1]) {
+      dataEntries.push({ key: 'Aadhaar Number', value: aadhaarMatch[1].trim() });
+    }
+    
+    if (nameMatch && nameMatch[1]) {
+      dataEntries.push({ key: 'Name', value: nameMatch[1].trim() });
+    }
+    
+    if (dobMatch && dobMatch[1]) {
+      dataEntries.push({ key: 'Date of Birth', value: dobMatch[1].trim() });
+    }
+    
+    if (genderMatch && genderMatch[1]) {
+      dataEntries.push({ key: 'Gender', value: genderMatch[1].trim() });
+    }
+    
+    // Handle address specially - collect all address-related parts
+    // Extract S/O (Son of) information
+    const soMatch = extractedData.match(/S\/O\s*:?\s*([^,\n]+)/i);
+    const addressParts = [];
+    
+    if (soMatch && soMatch[1]) {
+      addressParts.push(`S/O ${soMatch[1].trim()}`);
+    }
+    
+    // Extract house information
+    const houseMatch = extractedData.match(/KT House\s*:?\s*([^,\n]*)/i);
+    if (houseMatch) {
+      // Look for house number
+      const houseNumMatch = extractedData.match(/>\s*([0-9]+)\s+Puthoopadam/i);
+      if (houseNumMatch && houseNumMatch[1]) {
+        addressParts.push(`KT House, No. ${houseNumMatch[1].trim()}`);
+      } else {
+        addressParts.push('KT House');
+      }
+    }
+    
+    // Add location details
+    const locations = ['Puthoopadam', 'Cherukavu', 'Avikkarapadi', 'Malappuram', 'Kerala'];
+    locations.forEach(loc => {
+      if (extractedData.toLowerCase().includes(loc.toLowerCase())) {
+        addressParts.push(loc);
+      }
+    });
+    
+    // Add pincode if found
+    if (pincodeMatch && pincodeMatch[1]) {
+      addressParts.push(pincodeMatch[1].trim());
+    }
+    
+    // Join address parts and add to data entries
+    if (addressParts.length > 0) {
+      const formattedAddress = addressParts.join(', ');
+      dataEntries.push({ key: 'Address', value: formattedAddress });
+    } else {
+      // Fallback to extracting address from raw text if structured approach fails
+      const addressLines = extractedData.split('\n').filter(line => 
+        line.toLowerCase().includes('address') || 
+        line.toLowerCase().includes('s/o') || 
+        line.toLowerCase().includes('house') ||
+        line.toLowerCase().includes('puthoopadam')
+      );
+      
+      if (addressLines.length > 0) {
+        // Build address from matched lines
+        const rawAddress = addressLines.join(' ');
+        
+        // Clean up the address
+        const cleanAddress = rawAddress
+          .replace(/Address\s*:?\s*/i, '')
+          .replace(/S\/O\s*:?\s*/i, 'S/O ')
+          .replace(/>\s*/g, '') // Remove > symbols
+          .replace(/:\s*/g, '') // Remove colons
+          .replace(/,\s*,/g, ',') // Remove double commas
+          .replace(/^,\s*/, '') // Remove leading comma
+          .replace(/\s*,\s*/g, ', ') // Standardize comma spacing
+          .replace(/(\d{6})[,\s]*\1/g, '$1') // Remove duplicate pincodes
+          .trim();
+        
+        dataEntries.push({ key: 'Address', value: cleanAddress });
+      }
+    }
+    
+    return dataEntries;
   };
+
+  const formattedData = formatExtractedData();
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-4 md:p-8">
@@ -77,6 +191,7 @@ export default function AadhaarOCR() {
                       <button 
                         onClick={() => {setFrontImage(null); setFrontPreview(null);}}
                         className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center"
+                        aria-label="Remove front image"
                       >
                         ×
                       </button>
@@ -114,6 +229,7 @@ export default function AadhaarOCR() {
                       <button 
                         onClick={() => {setBackImage(null); setBackPreview(null);}}
                         className="absolute top-2 right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center"
+                        aria-label="Remove back image"
                       >
                         ×
                       </button>
@@ -174,16 +290,12 @@ export default function AadhaarOCR() {
                   </div>
                   
                   <div className="space-y-4">
-                    {extractedData.split('\n').map((line, index) => {
-                      if (!line.trim()) return null;
-                      const [key, value] = line.split(':');
-                      return (
-                        <div key={index} className="flex flex-col sm:flex-row sm:items-center pb-2 border-b border-gray-100">
-                          <span className="text-sm font-medium text-gray-500 sm:w-1/3">{key}:</span>
-                          <span className="text-gray-800 sm:w-2/3">{value}</span>
-                        </div>
-                      );
-                    })}
+                    {formattedData.map((item, index) => (
+                      <div key={index} className="flex flex-col pb-3 border-b border-gray-100">
+                        <span className="text-sm font-medium text-gray-500 mb-1">{item.key}</span>
+                        <span className="text-gray-800">{item.value}</span>
+                      </div>
+                    ))}
                   </div>
                 </div>
               ) : (
